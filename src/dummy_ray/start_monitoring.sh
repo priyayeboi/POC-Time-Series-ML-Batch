@@ -4,6 +4,7 @@
 #   Ray dashboard: http://127.0.0.1:8265  (Metrics tab embeds the Grafana panels)
 #   Prometheus:    http://localhost:9090
 #   Grafana:       http://localhost:3000  (dashboards in the "Ray" folder)
+#   MLflow:        http://127.0.0.1:5050  (experiments, runs and registered models)
 #
 # Run from anywhere: src/dummy_ray/start_monitoring.sh
 # Training scripts connect to this cluster with ray.init().
@@ -49,7 +50,26 @@ for _ in $(seq 1 30); do
 done
 curl -sf http://localhost:3000/api/health >/dev/null || { echo "Grafana did not start; see $MON_DIR/grafana.log"; exit 1; }
 
+# 4. MLflow tracking server. Runs and models persist in mlruns/ across restarts.
+#    Port 5000 is taken by macOS AirPlay Receiver, so use 5050.
+MLFLOW_DIR="$REPO/mlruns"
+if curl -sf http://127.0.0.1:5050/health >/dev/null; then
+  echo "MLflow already running on :5050"
+else
+  mkdir -p "$MLFLOW_DIR"
+  nohup "$REPO/venv/bin/mlflow" server --host 127.0.0.1 --port 5050 \
+    --backend-store-uri "sqlite:///$MLFLOW_DIR/mlflow.db" \
+    --artifacts-destination "$MLFLOW_DIR/artifacts" \
+    >"$MON_DIR/mlflow.log" 2>&1 &
+  for _ in $(seq 1 60); do
+    curl -sf http://127.0.0.1:5050/health >/dev/null && break
+    sleep 1
+  done
+  curl -sf http://127.0.0.1:5050/health >/dev/null || { echo "MLflow did not start; see $MON_DIR/mlflow.log"; exit 1; }
+fi
+
 echo
 echo "Ray dashboard: http://127.0.0.1:8265"
 echo "Prometheus:    http://localhost:9090"
 echo "Grafana:       http://localhost:3000"
+echo "MLflow:        http://127.0.0.1:5050"
